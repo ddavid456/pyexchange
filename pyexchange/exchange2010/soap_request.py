@@ -5,12 +5,19 @@ Licensed under the Apache License, Version 2.0 (the "License");?you may not use 
 Unless required by applicable law or agreed to in writing, software?distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 """
 from lxml.builder import ElementMaker
-from ..utils import convert_datetime_to_utc
+from ..utils import convert_datetime_to_utc, convert_to_win32time
 from ..compat import _unicode
 
 MSG_NS = u'http://schemas.microsoft.com/exchange/services/2006/messages'
 TYPE_NS = u'http://schemas.microsoft.com/exchange/services/2006/types'
 SOAP_NS = u'http://schemas.xmlsoap.org/soap/envelope/'
+
+soap = ElementMaker(namespace='http://schemas.xmlsoap.org/soap/envelope/', nsmap={
+    'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+    'm': 'http://schemas.microsoft.com/exchange/services/2006/messages',
+    't': 'http://schemas.microsoft.com/exchange/services/2006/types',
+    'soap': 'http://schemas.xmlsoap.org/soap/envelope/'
+})
 
 NAMESPACES = {u'm': MSG_NS, u't': TYPE_NS, u's': SOAP_NS}
 
@@ -282,71 +289,80 @@ def new_event(event):
   Requests a new event be created in the store.
 
   http://msdn.microsoft.com/en-us/library/aa564690(v=exchg.140).aspx
+  http://docs.microsoft.com/en-us/exchange/client-developer/exchange-web-services/how-to-create-appointments-and-meetings-by-using-ews-in-exchange-2013
 
-  <m:CreateItem SendMeetingInvitations="SendToAllAndSaveCopy"
-              xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
-              xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
-    <m:SavedItemFolderId>
-        <t:DistinguishedFolderId Id="calendar"/>
-    </m:SavedItemFolderId>
-    <m:Items>
+  <?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+       xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Header>
+    <t:RequestServerVersion Version="Exchange2007_SP1" />
+    <t:TimeZoneContext>
+      <t:TimeZoneDefinition Id="Pacific Standard Time" />
+    </t:TimeZoneContext>
+  </soap:Header>
+  <soap:Body>
+    <m:CreateItem SendMeetingInvitations="SendToAllAndSaveCopy">
+      <m:Items>
         <t:CalendarItem>
-            <t:Subject>{event.subject}</t:Subject>
-            <t:Body BodyType="HTML">{event.subject}</t:Body>
-            <t:Start></t:Start>
-            <t:End></t:End>
-            <t:Location></t:Location>
-            <t:RequiredAttendees>
-                {% for attendee_email in meeting.required_attendees %}
-                <t:Attendee>
-                    <t:Mailbox>
-                        <t:EmailAddress>{{ attendee_email }}</t:EmailAddress>
-                    </t:Mailbox>
-                </t:Attendee>
-             HTTPretty   {% endfor %}
-            </t:RequiredAttendees>
-            {% if meeting.optional_attendees %}
-            <t:OptionalAttendees>
-                {% for attendee_email in meeting.optional_attendees %}
-                    <t:Attendee>
-                        <t:Mailbox>
-                            <t:EmailAddress>{{ attendee_email }}</t:EmailAddress>
-                        </t:Mailbox>
-                    </t:Attendee>
-                {% endfor %}
-            </t:OptionalAttendees>
-            {% endif %}
-            {% if meeting.conference_room %}
-            <t:Resources>
-                <t:Attendee>
-                    <t:Mailbox>
-                        <t:EmailAddress>{{ meeting.conference_room.email }}</t:EmailAddress>
-                    </t:Mailbox>
-                </t:Attendee>
-            </t:Resources>
-            {% endif %}
-            </t:CalendarItem>
-    </m:Items>
-</m:CreateItem>
+          <t:Subject>Team building exercise</t:Subject>
+          <t:Body BodyType="HTML">Let's learn to really work as a team and then have lunch!</t:Body>
+          <t:ReminderMinutesBeforeStart>60</t:ReminderMinutesBeforeStart>
+          <t:Start>2013-09-21T16:00:00.000Z</t:Start>
+          <t:End>2013-09-21T20:00:00.000Z</t:End>
+          <t:Location>Conference Room 12</t:Location>
+          <t:RequiredAttendees>
+            <t:Attendee>
+              <t:Mailbox>
+                <t:EmailAddress>Mack.Chaves@contoso.com</t:EmailAddress>
+              </t:Mailbox>
+            </t:Attendee>
+            <t:Attendee>
+              <t:Mailbox>
+                <t:EmailAddress>Sadie.Daniels@contoso.com</t:EmailAddress>
+              </t:Mailbox>
+            </t:Attendee>
+          </t:RequiredAttendees>
+          <t:OptionalAttendees>
+            <t:Attendee>
+              <t:Mailbox>
+                <t:EmailAddress>Magdalena.Kemp@contoso.com</t:EmailAddress>
+              </t:Mailbox>
+            </t:Attendee>
+          </t:OptionalAttendees>
+          <t:MeetingTimeZone TimeZoneName="Pacific Standard Time" />
+        </t:CalendarItem>
+      </m:Items>
+    </m:CreateItem>
+  </soap:Body>
+</soap:Envelope>
   """
 
-  id = T.DistinguishedFolderId(Id=event.calendar_id) if event.calendar_id in DISTINGUISHED_IDS else T.FolderId(Id=event.calendar_id)
+  envelope = soap('Envelope')
+  header = soap('Header')
+  body = soap('Body')
 
   start = convert_datetime_to_utc(event.start)
   end = convert_datetime_to_utc(event.end)
+  timezone = convert_to_win32time(event.start)
 
-  root = M.CreateItem(
-    M.SavedItemFolderId(id),
-    M.Items(
-      T.CalendarItem(
+  header.append(T.RequestServerVersion(Version="Exchange2007_SP1"))
+  header.append(T.TimeZoneContext(T.TimeZoneDefinition(Id=timezone)))
+
+  calendar_node = T.CalendarItem(
         T.Subject(event.subject),
         T.Body(event.body or u'', BodyType="HTML"),
       )
+
+  root = M.CreateItem(
+    M.Items(
+      calendar_node
     ),
     SendMeetingInvitations="SendToAllAndSaveCopy"
   )
 
-  calendar_node = root.xpath(u'/m:CreateItem/m:Items/t:CalendarItem', namespaces=NAMESPACES)[0]
+  body.append(root)
+  envelope.append(header)
+  envelope.append(body)
 
   if event.reminder_minutes_before_start:
     calendar_node.append(T.ReminderIsSet('true'))
@@ -357,10 +373,14 @@ def new_event(event):
   calendar_node.append(T.Start(start.strftime(EXCHANGE_DATETIME_FORMAT)))
   calendar_node.append(T.End(end.strftime(EXCHANGE_DATETIME_FORMAT)))
 
+
+
   if event.is_all_day:
     calendar_node.append(T.IsAllDayEvent('true'))
 
-  calendar_node.append(T.Location(event.location or u''))
+  if event.location:
+    calendar_node.append(T.Location(event.location or u''))
+
 
   if event.required_attendees:
     calendar_node.append(resource_node(element=T.RequiredAttendees(), resources=event.required_attendees))
@@ -403,7 +423,8 @@ def new_event(event):
       )
     )
 
-  return root
+  calendar_node.append(T.MeetingTimeZone(TimeZoneName=timezone))
+  return envelope
 
 
 def delete_event(event):

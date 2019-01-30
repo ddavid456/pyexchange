@@ -261,7 +261,7 @@ class Exchange2010CalendarEvent(BaseExchangeCalendarEvent):
     self.validate()
     body = soap_request.new_event(self)
 
-    response_xml = self.service.send(body)
+    response_xml = self.service.send(body, event=True)
     self._id, self._change_key = self._parse_id_and_change_key_from_response(response_xml)
 
     return self
